@@ -42,12 +42,16 @@
 #include "SDL_kmsdrmopengles.h"
 #include "SDL_kmsdrmmouse.h"
 #include "SDL_kmsdrmdyn.h"
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
 #include <poll.h>
 
 #define KMSDRM_DRI_PATH "/dev/dri/"
+
+rga_info_t src_info = {0};
+rga_info_t dst_info = {0};
 
 static int
 check_modestting(int devindex)
@@ -254,6 +258,45 @@ KMSDRM_FBDestroyCallback(struct gbm_bo *bo, void *data)
     SDL_free(fb_info);
 }
 
+static void
+KMSDRM_InitRotateBuffer(_THIS, int frameWidth, int frameHeight)
+{
+    // acquire new DRM PRIME buffer for rotate screen
+    int ret;
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
+    struct drm_mode_create_dumb dmcd = {};
+    struct drm_prime_handle dph = {};
+    dmcd.bpp = 32;
+    dmcd.width = frameWidth;
+    dmcd.height = frameHeight;
+
+    do {
+        ret = ioctl(viddata->drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &dmcd);
+    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+
+    viddata->rotHandle = dph.handle = dmcd.handle;
+    dph.fd = -1;
+
+    do {
+        ret = ioctl(viddata->drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &dph);
+    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+
+    assert(!ret);
+
+    // setup rotation
+    c_RkRgaInit();
+    src_info.mmuFlag = 1;
+    src_info.rotation = HAL_TRANSFORM_ROT_270;
+
+    // swap width and height here because our source buffer is 480x320
+    rga_set_rect(&src_info.rect, 0, 0, frameHeight, frameWidth, frameHeight, frameWidth, RK_FORMAT_BGRA_8888);
+
+    dst_info.fd = dph.fd;
+    dst_info.mmuFlag = 1;
+
+    rga_set_rect(&dst_info.rect, 0, 0, frameWidth, frameHeight, frameWidth, frameHeight, RK_FORMAT_BGRA_8888);
+}
+
 KMSDRM_FBInfo *
 KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
 {
@@ -285,7 +328,7 @@ KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
     h = KMSDRM_gbm_bo_get_height(bo);
     stride = KMSDRM_gbm_bo_get_stride(bo);
     handle = KMSDRM_gbm_bo_get_handle(bo).u32;
-    ret = KMSDRM_drmModeAddFB(viddata->drm_fd, w, h, 24, 32, stride, handle,
+    ret = KMSDRM_drmModeAddFB(viddata->drm_fd, h, w, 24, 32, h * 4, viddata->rotHandle,
                                   &fb_info->fb_id);
     if (ret) {
       SDL_free(fb_info);
@@ -387,8 +430,8 @@ KMSDRM_CreateSurfaces(_THIS, SDL_Window * window)
     SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     SDL_WindowData *windata = (SDL_WindowData *)window->driverdata;
     SDL_DisplayData *dispdata = (SDL_DisplayData *) SDL_GetDisplayForWindow(window)->driverdata;
-    Uint32 width = dispdata->mode.hdisplay;
-    Uint32 height = dispdata->mode.vdisplay;
+    Uint32 width = dispdata->mode.vdisplay;
+    Uint32 height = dispdata->mode.hdisplay;
     Uint32 surface_fmt = GBM_FORMAT_XRGB8888;
     Uint32 surface_flags = GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING;
     EGLContext egl_context;
@@ -579,8 +622,8 @@ KMSDRM_VideoInit(_THIS)
 
     /* Setup the single display that's available */
 
-    display.desktop_mode.w = dispdata->mode.hdisplay;
-    display.desktop_mode.h = dispdata->mode.vdisplay;
+    display.desktop_mode.w = dispdata->mode.vdisplay;
+    display.desktop_mode.h = dispdata->mode.hdisplay;
     display.desktop_mode.refresh_rate = dispdata->mode.vrefresh;
 #if 1
     display.desktop_mode.format = SDL_PIXELFORMAT_ARGB8888;
@@ -697,8 +740,8 @@ KMSDRM_GetDisplayModes(_THIS, SDL_VideoDisplay * display)
           modedata->mode_index = i;
         }
 
-        mode.w = conn->modes[i].hdisplay;
-        mode.h = conn->modes[i].vdisplay;
+        mode.w = conn->modes[i].vdisplay;
+        mode.h = conn->modes[i].hdisplay;
         mode.refresh_rate = conn->modes[i].vrefresh;
         mode.format = SDL_PIXELFORMAT_ARGB8888;
         mode.driverdata = modedata;
@@ -750,6 +793,7 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
     SDL_VideoData *viddata = (SDL_VideoData *)_this->driverdata;
     SDL_WindowData *windata;
     SDL_VideoDisplay *display;
+    SDL_DisplayData *data;
 
 #if SDL_VIDEO_OPENGL_EGL
     if (!_this->egl_data) {
@@ -808,6 +852,9 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
 
     viddata->windows[viddata->num_windows++] = window;
 
+    data = display->driverdata;
+    KMSDRM_InitRotateBuffer(_this, data->mode.hdisplay, data->mode.vdisplay);
+
     return 0;
 
 error:
@@ -845,6 +892,7 @@ KMSDRM_DestroyWindow(_THIS, SDL_Window * window)
     window->driverdata = NULL;
 
     SDL_free(windata);
+    c_RkRgaDeInit();
 }
 
 int

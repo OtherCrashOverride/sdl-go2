@@ -33,6 +33,9 @@
 #define EGL_PLATFORM_GBM_MESA 0x31D7
 #endif
 
+extern rga_info_t src_info;
+extern rga_info_t dst_info;
+
 /* EGL implementation of SDL OpenGL support */
 
 int
@@ -68,6 +71,18 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
     /* Recreate the GBM / EGL surfaces if the display mode has changed */
     if (windata->egl_surface_dirty) {
         KMSDRM_CreateSurfaces(_this, window);
+    }
+
+    if (windata->curr_bo != NULL) {
+        if (src_info.fd > 0) {
+            close(src_info.fd);
+            src_info.fd = -1;
+        }
+        src_info.fd = KMSDRM_gbm_bo_get_fd(windata->curr_bo);
+        if (c_RkRgaBlit(&src_info, &dst_info, NULL) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_VIDEO,
+                          "Failed to rga blit\n");
+        }
     }
 
     /* Wait for confirmation that the next front buffer has been flipped, at which

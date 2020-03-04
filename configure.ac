@@ -2236,6 +2236,11 @@ AS_HELP_STRING([--enable-video-kmsdrm], [use KMSDRM video driver [[default=no]]]
         PKG_CHECK_MODULES([LIBDRM], [libdrm >= 2.4.46], libdrm_avail=yes, libdrm_avail=no)
         PKG_CHECK_MODULES([LIBGBM], [gbm >= 9.0.0], libgbm_avail=yes, libgbm_avail=no)
 
+        AC_CHECK_LIB(rga, c_RkRgaInit, have_rga_lib=yes)
+        if test x$have_rga_lib = xyes ; then
+            EXTRA_LDFLAGS="$EXTRA_LDFLAGS -lrga"
+        fi
+
         if test x$libdrm_avail = xyes -a x$libgbm_avail = xyes; then
             video_kmsdrm=yes
         fi

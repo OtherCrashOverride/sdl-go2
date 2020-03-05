@@ -37,6 +37,8 @@
 #include <rga/RgaApi.h>
 #include <assert.h>
 
+#define RGA_BUFFERS_MAX (3)
+
 typedef struct SDL_VideoData
 {
     int devindex;               /* device index that was passed on creation */
@@ -46,7 +48,9 @@ typedef struct SDL_VideoData
     SDL_Window **windows;
     int max_windows;
     int num_windows;
-    uint32_t rotHandle;         /* dest rotate handle */
+    struct gbm_bo* rga_buffers[RGA_BUFFERS_MAX];
+    int rga_buffer_prime_fds[RGA_BUFFERS_MAX];
+    int rga_buffer_index;
 } SDL_VideoData;
 
 

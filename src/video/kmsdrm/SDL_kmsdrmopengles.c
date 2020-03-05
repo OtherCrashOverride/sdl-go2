@@ -67,22 +67,12 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
     SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     KMSDRM_FBInfo *fb_info;
     int ret, timeout;
+    struct gbm_bo* rga_buffer = NULL;
+
 
     /* Recreate the GBM / EGL surfaces if the display mode has changed */
     if (windata->egl_surface_dirty) {
         KMSDRM_CreateSurfaces(_this, window);
-    }
-
-    if (windata->curr_bo != NULL) {
-        if (src_info.fd > 0) {
-            close(src_info.fd);
-            src_info.fd = -1;
-        }
-        src_info.fd = KMSDRM_gbm_bo_get_fd(windata->curr_bo);
-        if (c_RkRgaBlit(&src_info, &dst_info, NULL) < 0) {
-            SDL_LogError(SDL_LOG_CATEGORY_VIDEO,
-                          "Failed to rga blit\n");
-        }
     }
 
     /* Wait for confirmation that the next front buffer has been flipped, at which
@@ -119,10 +109,23 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Locked GBM surface %p", (void *)windata->next_bo); */
     }
 
-    fb_info = KMSDRM_FBFromBO(_this, windata->next_bo);
+    
+    src_info.fd = KMSDRM_gbm_bo_get_fd(windata->next_bo);
+    dst_info.fd = viddata->rga_buffer_prime_fds[viddata->rga_buffer_index];
+    if (c_RkRgaBlit(&src_info, &dst_info, NULL) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_VIDEO,
+                        "Failed to rga blit\n");
+    }
+    close(src_info.fd);
+
+    rga_buffer = viddata->rga_buffers[viddata->rga_buffer_index];
+    fb_info = KMSDRM_FBFromBO(_this, rga_buffer);
     if (!fb_info) {
         return 0;
     }
+
+    viddata->rga_buffer_index = (viddata->rga_buffer_index + 1) % RGA_BUFFERS_MAX;
+
 
     if (!windata->curr_bo) {
         /* On the first swap, immediately present the new front buffer. Before

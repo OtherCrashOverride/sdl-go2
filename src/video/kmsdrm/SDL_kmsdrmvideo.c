@@ -264,24 +264,18 @@ KMSDRM_InitRotateBuffer(_THIS, int frameWidth, int frameHeight)
     // acquire new DRM PRIME buffer for rotate screen
     int ret;
     SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
-    struct drm_mode_create_dumb dmcd = {};
-    struct drm_prime_handle dph = {};
-    dmcd.bpp = 32;
-    dmcd.width = frameWidth;
-    dmcd.height = frameHeight;
 
-    do {
-        ret = ioctl(viddata->drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &dmcd);
-    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+    // create buffers for RGA
+    for (int i = 0; i < RGA_BUFFERS_MAX; ++i)
+    {
+        viddata->rga_buffers[i] = KMSDRM_gbm_bo_create(viddata->gbm,
+              frameWidth, frameHeight,
+              GBM_FORMAT_XRGB8888, GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
+        assert(viddata->rga_buffers[i]);
 
-    viddata->rotHandle = dph.handle = dmcd.handle;
-    dph.fd = -1;
-
-    do {
-        ret = ioctl(viddata->drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &dph);
-    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-
-    assert(!ret);
+        viddata->rga_buffer_prime_fds[i] = KMSDRM_gbm_bo_get_fd(viddata->rga_buffers[i]);
+    }
+    viddata->rga_buffer_index = 0;
 
     // setup rotation
     c_RkRgaInit();
@@ -291,7 +285,7 @@ KMSDRM_InitRotateBuffer(_THIS, int frameWidth, int frameHeight)
     // swap width and height here because our source buffer is 480x320
     rga_set_rect(&src_info.rect, 0, 0, frameHeight, frameWidth, frameHeight, frameWidth, RK_FORMAT_BGRA_8888);
 
-    dst_info.fd = dph.fd;
+    dst_info.fd = -1; //dph.fd;
     dst_info.mmuFlag = 1;
 
     rga_set_rect(&dst_info.rect, 0, 0, frameWidth, frameHeight, frameWidth, frameHeight, RK_FORMAT_BGRA_8888);
@@ -328,7 +322,7 @@ KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
     h = KMSDRM_gbm_bo_get_height(bo);
     stride = KMSDRM_gbm_bo_get_stride(bo);
     handle = KMSDRM_gbm_bo_get_handle(bo).u32;
-    ret = KMSDRM_drmModeAddFB(viddata->drm_fd, h, w, 24, 32, h * 4, viddata->rotHandle,
+    ret = KMSDRM_drmModeAddFB(viddata->drm_fd, w, h, 24, 32, stride, handle,
                                   &fb_info->fb_id);
     if (ret) {
       SDL_free(fb_info);
